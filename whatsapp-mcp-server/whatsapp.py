@@ -729,6 +729,54 @@ def send_audio_message(recipient: str, media_path: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
+
+def send_chat_presence(
+    recipient: str,
+    state: str = "composing",
+    media: str = "text",
+) -> Tuple[bool, str]:
+    """Send chat presence (typing/recording indicator) to a chat.
+
+    Args:
+        recipient: Chat identifier. Can be a full JID (e.g. "123@s.whatsapp.net" or "123@g.us")
+            or a phone number (country code, no +).
+        state: "composing" (typing) or "paused" (stop typing)
+        media: "text" (typing) or "audio" (recording voice)
+    """
+    try:
+        if not recipient:
+            return False, "Recipient must be provided"
+
+        url = f"{WHATSAPP_API_BASE_URL}/presence/chat"
+        payload = {
+            "recipient": recipient,
+            "state": state,
+            "media": media,
+        }
+
+        response = requests.post(url, json=payload)
+
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("success", False), result.get("message", "Unknown response")
+
+        # Try to surface JSON error responses nicely.
+        try:
+            result = response.json()
+            if isinstance(result, dict) and "message" in result:
+                return False, f"Error: HTTP {response.status_code} - {result.get('message')}"
+        except Exception:
+            pass
+
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+
+    except requests.RequestException as e:
+        return False, f"Request error: {str(e)}"
+    except json.JSONDecodeError:
+        return False, f"Error parsing response: {response.text}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
 def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     """Download media from a message and return the local file path.
     

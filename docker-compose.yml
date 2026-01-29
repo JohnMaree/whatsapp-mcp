@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  whatsapp-bridge:
+    build: ./whatsapp-bridge
+    ports:
+      - "8111:8080"
+    environment:
+      - HTTP_PORT=8080
+      - QR_MODE=http
+    volumes:
+      - whatsapp-session:/app/store
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/auth/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  whatsapp-mcp:
+    build: ./whatsapp-mcp-server
+    ports:
+      - "8112:8112"
+    environment:
+      - BRIDGE_URL=http://192.168.1.103:8111
+      - DATABASE_PATH=/data/messages.db
+    volumes:
+      - whatsapp-session:/data:ro
+    depends_on:
+      whatsapp-bridge:
+        condition: service_healthy
+
+volumes:
+  whatsapp-session:

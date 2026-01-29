@@ -225,6 +225,22 @@ type SendMessageRequest struct {
 	MediaPath string `json:"media_path,omitempty"`
 }
 
+// ChatPresenceRequest represents the request body for the chat presence API
+// state: "composing" | "paused"
+// media: "text" | "audio" (optional; defaults to "text")
+type ChatPresenceRequest struct {
+	Recipient string `json:"recipient,omitempty"`
+	ChatJID   string `json:"chat_jid,omitempty"`
+	State     string `json:"state,omitempty"`
+	Media     string `json:"media,omitempty"`
+}
+
+// ChatPresenceResponse represents the response body for the chat presence API
+type ChatPresenceResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // Function to send a WhatsApp message
 func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
 	if !client.IsConnected() {
@@ -744,6 +760,95 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			Success: success,
 			Message: message,
 		})
+	})
+
+	// Handler for chat presence (typing/recording indicator)
+	http.HandleFunc("/api/presence/chat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		var req ChatPresenceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: "Invalid request format"})
+			return
+		}
+
+		target := strings.TrimSpace(req.ChatJID)
+		if target == "" {
+			target = strings.TrimSpace(req.Recipient)
+		}
+		if target == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: "recipient or chat_jid is required"})
+			return
+		}
+
+		if !client.IsConnected() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: "Not connected to WhatsApp"})
+			return
+		}
+
+		stateStr := strings.ToLower(strings.TrimSpace(req.State))
+		if stateStr == "" {
+			stateStr = "composing"
+		}
+
+		var state types.ChatPresence
+		switch stateStr {
+		case "composing", "typing":
+			state = types.ChatPresenceComposing
+		case "paused", "stop":
+			state = types.ChatPresencePaused
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: "Invalid state. Use 'composing' or 'paused'"})
+			return
+		}
+
+		mediaStr := strings.ToLower(strings.TrimSpace(req.Media))
+		if mediaStr == "" {
+			mediaStr = "text"
+		}
+
+		var media types.ChatPresenceMedia
+		switch mediaStr {
+		case "text", "":
+			media = types.ChatPresenceMediaText
+		case "audio", "voice", "ptt", "recording":
+			media = types.ChatPresenceMediaAudio
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: "Invalid media. Use 'text' or 'audio'"})
+			return
+		}
+
+		// Parse recipient JID. If not a JID, assume it's a phone number.
+		var recipientJID types.JID
+		var err error
+		if strings.Contains(target, "@") {
+			recipientJID, err = types.ParseJID(target)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: fmt.Sprintf("Error parsing JID: %v", err)})
+				return
+			}
+		} else {
+			recipientJID = types.JID{User: target, Server: "s.whatsapp.net"}
+		}
+
+		if err := client.SendChatPresence(r.Context(), recipientJID, state, media); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(ChatPresenceResponse{Success: false, Message: fmt.Sprintf("Failed to send chat presence: %v", err)})
+			return
+		}
+
+		json.NewEncoder(w).Encode(ChatPresenceResponse{Success: true, Message: "Chat presence sent"})
 	})
 
 	// Handler for downloading media
