@@ -241,11 +241,27 @@ def send_chat_presence(
     Returns:
         A dictionary containing success status and a status message
     """
-    success, status_message = whatsapp_send_chat_presence(recipient, state=state, media=media)
-    return {
-        "success": success,
-        "message": status_message,
-    }
+    try:
+        success, status_message = whatsapp_send_chat_presence(recipient, state=state, media=media)
+        if success:
+            return {
+                "ok": True,
+                "success": True,
+                "message": status_message,
+            }
+        return {
+            "ok": False,
+            "success": False,
+            "error": status_message,
+            "message": status_message,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "success": False,
+            "error": str(e),
+            "message": str(e),
+        }
 
 @mcp.tool()
 def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
