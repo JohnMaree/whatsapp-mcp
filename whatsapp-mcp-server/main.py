@@ -301,7 +301,7 @@ if __name__ == "__main__":
     from starlette.responses import JSONResponse
     from starlette.routing import Mount, Route
 
-    def _get_mcp_asgi_app():
+    def _get_mcp_asgi_app(base_path: str):
         # Try a couple common FastMCP exposure points.
         for name in ("http_app", "asgi_app", "app"):
             candidate = getattr(mcp, name, None)
@@ -310,7 +310,7 @@ if __name__ == "__main__":
 
             if callable(candidate):
                 # Some versions want a mount/path kwarg, some take none.
-                for kwargs in ({"path": "/"}, {}):
+                for kwargs in ({"path": base_path}, {}):
                     try:
                         return candidate(**kwargs)
                     except TypeError:
@@ -320,7 +320,12 @@ if __name__ == "__main__":
 
         raise RuntimeError("FastMCP did not expose an ASGI app to mount")
 
-    mcp_app = _get_mcp_asgi_app()
+    mcp_app_root = _get_mcp_asgi_app("/")
+    try:
+        mcp_app_mcp = _get_mcp_asgi_app("/mcp")
+    except Exception:
+        # Fall back to using the same app instance if FastMCP doesn't support base path creation.
+        mcp_app_mcp = mcp_app_root
 
     async def health(_request):
         return JSONResponse({"ok": True})
@@ -328,7 +333,8 @@ if __name__ == "__main__":
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
-            Mount("/", app=mcp_app),
+            Mount("/mcp", app=mcp_app_mcp),
+            Mount("/", app=mcp_app_root),
         ]
     )
 
