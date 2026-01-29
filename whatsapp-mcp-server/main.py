@@ -347,6 +347,28 @@ if __name__ == "__main__":
             new_scope = dict(scope)
             new_scope["path"] = rewritten
             new_scope["root_path"] = (scope.get("root_path") or "") + "/mcp"
+
+            # Some servers do strict Accept negotiation. Ensure we advertise support for
+            # typical MCP HTTP responses (SSE + JSON).
+            headers = list(new_scope.get("headers") or [])
+            accept_idx = None
+            for i, (k, _v) in enumerate(headers):
+                if k.lower() == b"accept":
+                    accept_idx = i
+                    break
+
+            accept_value = b"text/event-stream, application/json"
+            if accept_idx is None:
+                headers.append((b"accept", accept_value))
+            else:
+                # Merge with existing Accept if present.
+                existing = headers[accept_idx][1]
+                if b"text/event-stream" not in existing and b"application/json" not in existing:
+                    headers[accept_idx] = (b"accept", existing + b", " + accept_value)
+                else:
+                    headers[accept_idx] = (b"accept", existing)
+
+            new_scope["headers"] = headers
             return await mcp_app(new_scope, receive, send)
 
         return await mcp_app(scope, receive, send)
