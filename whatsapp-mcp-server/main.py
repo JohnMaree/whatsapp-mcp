@@ -297,9 +297,6 @@ if __name__ == "__main__":
     # We wrap the MCP ASGI app because FastMCP doesn't always expose a router we can add routes to.
 
     import uvicorn
-    from starlette.applications import Starlette
-    from starlette.responses import JSONResponse
-    from starlette.routing import Mount, Route
 
     def _get_mcp_asgi_app(base_path: str):
         # Try a couple common FastMCP exposure points.
@@ -320,22 +317,38 @@ if __name__ == "__main__":
 
         raise RuntimeError("FastMCP did not expose an ASGI app to mount")
 
-    mcp_app_root = _get_mcp_asgi_app("/")
-    try:
-        mcp_app_mcp = _get_mcp_asgi_app("/mcp")
-    except Exception:
-        # Fall back to using the same app instance if FastMCP doesn't support base path creation.
-        mcp_app_mcp = mcp_app_root
+    mcp_app = _get_mcp_asgi_app("/")
 
-    async def health(_request):
-        return JSONResponse({"ok": True})
+    async def app(scope, receive, send):
+        if scope.get("type") != "http":
+            return await mcp_app(scope, receive, send)
 
-    app = Starlette(
-        routes=[
-            Route("/health", health, methods=["GET"]),
-            Mount("/mcp", app=mcp_app_mcp),
-            Mount("/", app=mcp_app_root),
-        ]
-    )
+        path = scope.get("path") or "/"
+
+        # Healthcheck endpoint
+        if path == "/health":
+            body = b'{"ok": true}'
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        # Some clients POST to /mcp. Rewrite /mcp(/...) to /(/...) for the mounted MCP app.
+        if path == "/mcp" or path.startswith("/mcp/"):
+            rewritten = path[len("/mcp"):]
+            if rewritten == "":
+                rewritten = "/"
+
+            new_scope = dict(scope)
+            new_scope["path"] = rewritten
+            new_scope["root_path"] = (scope.get("root_path") or "") + "/mcp"
+            return await mcp_app(new_scope, receive, send)
+
+        return await mcp_app(scope, receive, send)
 
     uvicorn.run(app, host="0.0.0.0", port=8112)
