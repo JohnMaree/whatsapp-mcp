@@ -293,17 +293,43 @@ def hello() -> str:
     return f"Hello!"
 
 if __name__ == "__main__":
-    # Initialize and run the server
-    # Add a simple /health endpoint for container/orchestrator probes.
-    try:
-        app = getattr(mcp, "app", None)
-        if app is not None and hasattr(app, "get"):
-            @app.get("/health")
-            async def health():
-                return {"ok": True}
-    except Exception:
-        # If we can't attach a route (FastMCP internals differ), just run normally.
-        pass
+    # Run over HTTP and provide a simple /health endpoint.
+    # We wrap the MCP ASGI app because FastMCP doesn't always expose a router we can add routes to.
 
-    print("gonna do mcp.run")
-    mcp.run(transport="http", host="0.0.0.0", port=8112, path="/")
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+
+    def _get_mcp_asgi_app():
+        # Try a couple common FastMCP exposure points.
+        for name in ("http_app", "asgi_app", "app"):
+            candidate = getattr(mcp, name, None)
+            if candidate is None:
+                continue
+
+            if callable(candidate):
+                # Some versions want a mount/path kwarg, some take none.
+                for kwargs in ({"path": "/"}, {}):
+                    try:
+                        return candidate(**kwargs)
+                    except TypeError:
+                        continue
+            else:
+                return candidate
+
+        raise RuntimeError("FastMCP did not expose an ASGI app to mount")
+
+    mcp_app = _get_mcp_asgi_app()
+
+    async def health(_request):
+        return JSONResponse({"ok": True})
+
+    app = Starlette(
+        routes=[
+            Route("/health", health, methods=["GET"]),
+            Mount("/", app=mcp_app),
+        ]
+    )
+
+    uvicorn.run(app, host="0.0.0.0", port=8112)
