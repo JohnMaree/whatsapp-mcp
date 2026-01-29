@@ -294,5 +294,16 @@ def hello() -> str:
 
 if __name__ == "__main__":
     # Initialize and run the server
+    # Add a simple /health endpoint for container/orchestrator probes.
+    try:
+        app = getattr(mcp, "app", None)
+        if app is not None and hasattr(app, "get"):
+            @app.get("/health")
+            async def health():
+                return {"ok": True}
+    except Exception:
+        # If we can't attach a route (FastMCP internals differ), just run normally.
+        pass
+
     print("gonna do mcp.run")
     mcp.run(transport="http", host="0.0.0.0", port=8112, path="/")
